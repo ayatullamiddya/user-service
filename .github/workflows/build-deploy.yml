@@ -1,0 +1,70 @@
+name: Build and Deploy to Minikube
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+
+    runs-on: self-hosted
+
+    steps:
+
+      # 1. Checkout source code
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      # 2. Check Java
+      - name: Check Java
+        run: java -version
+
+      # 3. Build Spring Boot application
+      - name: Build application
+        run: mvn clean package -DskipTests
+
+      # 4. Check Minikube
+      - name: Check Minikube
+        run: minikube status
+
+      # 5. Use Minikube Docker environment
+      - name: Configure Docker for Minikube
+        shell: powershell
+        run: |
+          minikube docker-env --shell powershell | Invoke-Expression
+
+      # 6. Build Docker image inside Minikube
+      - name: Build Docker image
+        run: |
+          docker build -t my-service:latest .
+
+      # 7. Check Docker image
+      - name: Check Docker image
+        run: docker images my-service
+
+      # 8. Check Kubernetes connection
+      - name: Check Kubernetes
+        run: |
+          kubectl config current-context
+          kubectl get nodes
+
+      # 9. Deploy application
+      - name: Deploy to Minikube
+        run: |
+          kubectl apply -f k8s/deployment.yml
+          kubectl apply -f k8s/service.yml
+
+      # 10. Restart deployment
+      - name: Restart deployment
+        run: |
+          kubectl rollout restart deployment/my-service
+
+      # 11. Check deployment
+      - name: Check deployment
+        run: |
+          kubectl get deployments
+          kubectl get pods
+          kubectl get services
