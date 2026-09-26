@@ -77,7 +77,7 @@ jobs:
       # ============================================================
       - name: Build Docker image
         run: |
-          docker build -t user-service:${{ github.sha }} .
+          docker build -t user-service:$env:IMAGE_TAG .
 
 
       # ============================================================
