@@ -62,7 +62,7 @@ jobs:
       - name: Generate image tag
         shell: powershell
         run: |
-          $IMAGE_TAG = "${{ github.sha }}"
+          $IMAGE_TAG = "${{ github.sha }}".Substring(0, 7)
 
           Write-Host "Image tag:"
           Write-Host $IMAGE_TAG
