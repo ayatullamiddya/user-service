@@ -117,7 +117,9 @@ jobs:
         shell: powershell
         run: |
 
-          $deploymentExists = kubectl get deployment user-service --ignore-not-found
+          $deploymentExists = kubectl get deployment user-service `
+            --ignore-not-found `
+            -o name 2>$null
 
           if ([string]::IsNullOrWhiteSpace($deploymentExists)) {
 
@@ -150,43 +152,57 @@ jobs:
 
 
       # ============================================================
+      # 10. Prepare Deployment YAML with unique image
       # ============================================================
-	    # 10. Prepare Deployment YAML with unique image
-			# ============================================================
-			- name: Prepare Deployment
-			  shell: powershell
-			  run: |
+      - name: Prepare Deployment
+        shell: powershell
+        run: |
 
-				$deploymentFile = "k8s/deployment.yml"
+          $deploymentFile = "k8s/deployment.yml"
 
-				$generatedFile = Join-Path $env:RUNNER_TEMP "user-service-deployment.yml"
+          $generatedFile = Join-Path $env:RUNNER_TEMP "user-service-deployment.yml"
 
-				Write-Host "Generating deployment manifest..."
-				Write-Host "Image: user-service:$env:IMAGE_TAG"
+          Write-Host "Generating deployment manifest..."
+          Write-Host "Image: user-service:$env:IMAGE_TAG"
 
-				$content = Get-Content $deploymentFile -Raw
+          if (!(Test-Path $deploymentFile)) {
+              Write-Host "ERROR: Deployment file not found:"
+              Write-Host $deploymentFile
+              exit 1
+          }
 
-				$content = $content -replace `
-				  'image:\s*user-service:[^\s]+', `
-				  "image: user-service:$env:IMAGE_TAG"
+          $content = Get-Content $deploymentFile -Raw
 
-				Set-Content `
-				  -Path $generatedFile `
-				  -Value $content `
-				  -Encoding UTF8
+          $content = $content -replace `
+            'image:\s*user-service:[^\s]+', `
+            "image: user-service:$env:IMAGE_TAG"
 
-				Write-Host ""
-				Write-Host "===== GENERATED DEPLOYMENT ====="
-				Get-Content $generatedFile
+          Set-Content `
+            -Path $generatedFile `
+            -Value $content `
+            -Encoding UTF8
 
-				"GENERATED_DEPLOYMENT=$generatedFile" >> $env:GITHUB_ENV
+          Write-Host ""
+          Write-Host "===== GENERATED DEPLOYMENT ====="
+          Get-Content $generatedFile
+
+          "GENERATED_DEPLOYMENT=$generatedFile" >> $env:GITHUB_ENV
+
 
       # ============================================================
       # 11. Apply Deployment
       # ============================================================
       - name: Deploy new version
+        shell: powershell
         run: |
+          Write-Host "Applying deployment..."
+
           kubectl apply -f "$env:GENERATED_DEPLOYMENT"
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "ERROR: Deployment apply failed"
+              exit 1
+          }
 
 
       # ============================================================
@@ -206,6 +222,12 @@ jobs:
                 -l app=user-service `
                 -o json
 
+              if ($LASTEXITCODE -ne 0) {
+                  Write-Host "Unable to get ReplicaSets."
+                  Start-Sleep -Seconds 2
+                  continue
+              }
+
               $rsData = $rsJson | ConvertFrom-Json
 
               $candidates = @(
@@ -223,6 +245,7 @@ jobs:
 
                   $newReplicaSet = $candidates[0]
 
+                  Write-Host ""
                   Write-Host "New ReplicaSet found:"
                   Write-Host $newReplicaSet.metadata.name
 
@@ -238,7 +261,12 @@ jobs:
 
               Write-Host "ERROR: New ReplicaSet was not created."
 
+              Write-Host ""
+              Write-Host "Deployment:"
               kubectl get deployment user-service
+
+              Write-Host ""
+              Write-Host "ReplicaSets:"
               kubectl get rs -l app=user-service
 
               exit 1
@@ -279,6 +307,7 @@ jobs:
 
                   $newPod = $podName
 
+                  Write-Host ""
                   Write-Host "New pod found:"
                   Write-Host $newPod
 
@@ -302,11 +331,15 @@ jobs:
                   Write-Host "Rolling back..."
 
                   kubectl rollout undo deployment/user-service
-                  kubectl rollout status deployment/user-service --timeout=120s
+
+                  kubectl rollout status `
+                    deployment/user-service `
+                    --timeout=120s
               }
 
               exit 1
           }
+
 
           Write-Host ""
           Write-Host "Monitoring new pod:"
@@ -315,6 +348,10 @@ jobs:
 
           $success = $false
 
+
+          # ========================================================
+          # Monitor new pod
+          # ========================================================
           for ($i = 1; $i -le 60; $i++) {
 
               $phase = kubectl get pod $newPod `
@@ -333,10 +370,10 @@ jobs:
               Write-Host "Ready: $ready"
               Write-Host "Waiting reason: $waitingReason"
 
+
               # ----------------------------------------------------
               # SUCCESS
               # ----------------------------------------------------
-
               if ($phase -eq "Running" -and $ready -eq "True") {
 
                   Write-Host ""
@@ -353,7 +390,6 @@ jobs:
               # ----------------------------------------------------
               # DEFINITE FAILURE
               # ----------------------------------------------------
-
               if (
                   $waitingReason -eq "CrashLoopBackOff" -or
                   $waitingReason -eq "ImagePullBackOff" -or
@@ -375,9 +411,8 @@ jobs:
 
 
           # ========================================================
-          # New pod failed -> rollback
+          # New pod failed -> diagnostics + rollback
           # ========================================================
-
           if (!$success) {
 
               Write-Host ""
@@ -389,22 +424,40 @@ jobs:
               Write-Host "New pod:"
               kubectl get pod $newPod -o wide
 
+
               Write-Host ""
-              Write-Host "All user-service pods:"
-              kubectl get pods -l app=user-service -o wide
+              Write-Host "New pod logs:"
+              kubectl logs $newPod `
+                --all-containers=true `
+                --tail=200
+
+
+              Write-Host ""
+              Write-Host "Previous container logs:"
+              kubectl logs $newPod `
+                --all-containers=true `
+                --previous `
+                --tail=200 2>$null
+
 
               Write-Host ""
               Write-Host "New pod description:"
               kubectl describe pod $newPod
 
+
+              Write-Host ""
+              Write-Host "All user-service pods:"
+              kubectl get pods -l app=user-service -o wide
+
+
               Write-Host ""
               Write-Host "ReplicaSets:"
               kubectl get rs -l app=user-service
 
+
               # ----------------------------------------------------
               # Rollback only if an old version exists
               # ----------------------------------------------------
-
               if ($env:FIRST_DEPLOYMENT -eq "false") {
 
                   Write-Host ""
@@ -420,26 +473,40 @@ jobs:
                       exit 1
                   }
 
+
                   Write-Host ""
                   Write-Host "Waiting for rollback..."
 
-                  kubectl rollout status deployment/user-service --timeout=120s
+                  kubectl rollout status `
+                    deployment/user-service `
+                    --timeout=120s
 
                   if ($LASTEXITCODE -ne 0) {
 
                       Write-Host "ERROR: Rollback did not complete successfully."
 
+                      Write-Host ""
+                      Write-Host "Current pods:"
                       kubectl get pods -l app=user-service -o wide
 
                       exit 1
                   }
 
+
                   Write-Host ""
                   Write-Host "Rollback completed."
+
 
                   Write-Host ""
                   Write-Host "Current deployment:"
                   kubectl get deployment user-service
+
+
+                  Write-Host ""
+                  Write-Host "Current image:"
+                  kubectl get deployment user-service `
+                    -o jsonpath="{.spec.template.spec.containers[0].image}"
+
 
                   Write-Host ""
                   Write-Host "Current pods:"
@@ -454,29 +521,37 @@ jobs:
       # 14. Final deployment check
       # ============================================================
       - name: Final deployment check
+        shell: powershell
         run: |
 
           Write-Host "=========================================="
           Write-Host "FINAL DEPLOYMENT CHECK"
           Write-Host "=========================================="
 
+
+          Write-Host ""
+          Write-Host "Deployment:"
           kubectl get deployment user-service
 
-          Write-Host ""
 
+          Write-Host ""
+          Write-Host "Pods:"
           kubectl get pods -l app=user-service -o wide
 
-          Write-Host ""
 
+          Write-Host ""
+          Write-Host "Service:"
           kubectl get service user-service
 
-          Write-Host ""
 
+          Write-Host ""
           Write-Host "Current image:"
           kubectl get deployment user-service `
             -o jsonpath="{.spec.template.spec.containers[0].image}"
 
-          Write-Host ""
 
           Write-Host ""
-          Write-Host "Deployment completed successfully."
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "DEPLOYMENT COMPLETED SUCCESSFULLY"
+          Write-Host "=========================================="
