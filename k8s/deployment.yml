@@ -2,27 +2,49 @@ apiVersion: apps/v1
 kind: Deployment
 
 metadata:
-  name: my-service
+  name: user-service
 
 spec:
   replicas: 1
 
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+
   selector:
     matchLabels:
-      app: my-service
+      app: user-service
 
   template:
     metadata:
       labels:
-        app: my-service
+        app: user-service
 
     spec:
       containers:
-        - name: my-service
+        - name: user-service
 
-          image: my-service:latest
+          image: user-service:latest
 
-          imagePullPolicy: Never
+          imagePullPolicy: IfNotPresent
 
           ports:
             - containerPort: 8080
+            
+          env:
+            - name: SPRING_R2DBC_URL
+              value: "r2dbc:mysql://mysql-88a7d1-ayatullamiddya99-2fef.e.aivencloud.com:21734/studentdb?sslMode=DISABLED"
+
+            - name: SPRING_R2DBC_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: aiven-mysql-credentials
+                  key: AIVEN_USERNAME
+
+            - name: SPRING_R2DBC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: aiven-mysql-credentials
+                  key: AIVEN_PASSWORD
