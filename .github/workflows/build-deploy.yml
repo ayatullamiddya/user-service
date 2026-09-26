@@ -52,14 +52,16 @@ jobs:
         shell: powershell
         run: |
           Write-Host "Checking image in Minikube..."
+
           minikube image ls
 
           if (!(minikube image ls | Select-String "my-service:latest")) {
-              Write-Host "Image not found in Minikube"
+              Write-Host "ERROR: Image not found in Minikube"
               exit 1
           }
 
           Write-Host "Image found successfully"
+
       # 9. Deploy application
       - name: Deploy to Minikube
         run: |
@@ -76,8 +78,8 @@ jobs:
         run: |
           kubectl rollout status deployment/my-service --timeout=120s
 
-      # 12. Check pod status
-      - name: Verify pods are running
+      # 12. Verify ALL my-service pods are Running and Ready
+      - name: Verify my-service is healthy
         shell: powershell
         run: |
           Write-Host "Checking my-service pods..."
@@ -86,21 +88,48 @@ jobs:
 
           $pods = kubectl get pods -l app=my-service --no-headers
 
-          if ($pods -match "ContainerCreating|Pending|CrashLoopBackOff|Error|ImagePullBackOff") {
-              Write-Host "ERROR: my-service pod is not running correctly."
+          if ([string]::IsNullOrWhiteSpace($pods)) {
+              Write-Host "ERROR: No my-service pods found!"
+              exit 1
+          }
+
+          Write-Host ""
+          Write-Host "Pod status:"
+          Write-Host $pods
+          Write-Host ""
+
+          # Check for unhealthy pod states
+          if ($pods -match "Pending|ContainerCreating|CrashLoopBackOff|Error|ImagePullBackOff|ErrImagePull|CreateContainerError") {
+              Write-Host "ERROR: my-service has an unhealthy pod!"
+              Write-Host ""
+              kubectl get pods -l app=my-service -o wide
+              Write-Host ""
               kubectl describe pods -l app=my-service
               exit 1
           }
 
-          if (!($pods -match "1/1.*Running")) {
-              Write-Host "ERROR: my-service pod is not Ready."
-              kubectl describe pods -l app=my-service
-              exit 1
+          # Every pod must be 1/1 Running
+          $lines = $pods -split "`r?`n" | Where-Object { $_.Trim() -ne "" }
+
+          foreach ($line in $lines) {
+
+              if ($line -notmatch "1/1\s+Running") {
+                  Write-Host "ERROR: my-service pod is NOT Running and Ready!"
+                  Write-Host "Problematic pod:"
+                  Write-Host $line
+                  Write-Host ""
+
+                  kubectl get pods -l app=my-service -o wide
+                  Write-Host ""
+                  kubectl describe pods -l app=my-service
+
+                  exit 1
+              }
           }
 
-          Write-Host "SUCCESS: my-service pod is Running and Ready."
+          Write-Host "SUCCESS: All my-service pods are Running and Ready."
 
-      # 13. Check deployment and service
+      # 13. Final deployment check
       - name: Final deployment check
         run: |
           kubectl get deployment my-service
