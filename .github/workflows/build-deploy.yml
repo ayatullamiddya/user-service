@@ -11,7 +11,6 @@ on:
 
 jobs:
   build-and-deploy:
-
     runs-on: self-hosted
 
     steps:
@@ -45,13 +44,22 @@ jobs:
 
       # 7. Check Docker image
       - name: Check Docker image
-        run: docker images my-service
-
-      # 8. Check Kubernetes connection
-      - name: Check Kubernetes
         run: |
-          kubectl config current-context
-          kubectl get nodes
+          docker images my-service
+
+      # 8. Verify image availability in Minikube
+      - name: Verify image in Minikube
+        shell: powershell
+        run: |
+          Write-Host "Checking image in Minikube..."
+          minikube image ls
+
+          if (!(minikube image ls | Select-String "my-service:latest")) {
+              Write-Host "Image not found in Minikube"
+              exit 1
+          }
+
+          Write-Host "Image found successfully"
 
       # 9. Deploy application
       - name: Deploy to Minikube
@@ -59,12 +67,17 @@ jobs:
           kubectl apply -f k8s/deployment.yml
           kubectl apply -f k8s/service.yml
 
-      # 10. Restart deployment
+      # 10. Wait for pods to be ready
+      - name: Wait for Pods
+        run: |
+          kubectl rollout status deployment/my-service --timeout=60s
+
+      # 11. Restart deployment
       - name: Restart deployment
         run: |
           kubectl rollout restart deployment/my-service
 
-      # 11. Check deployment
+      # 12. Check deployment
       - name: Check deployment
         run: |
           kubectl get deployments
