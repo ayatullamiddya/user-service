@@ -44,20 +44,7 @@ jobs:
 
 
       # ============================================================
-      # 5. Configure Docker to use Minikube Docker daemon
-      # ============================================================
-      - name: Configure Docker for Minikube
-        shell: powershell
-        run: |
-          minikube docker-env --shell powershell | Invoke-Expression
-
-          Write-Host "Docker environment configured for Minikube"
-
-          docker version
-
-
-      # ============================================================
-      # 6. Generate unique image tag
+      # 5. Generate unique image tag
       # ============================================================
       - name: Generate image tag
         shell: powershell
@@ -68,28 +55,45 @@ jobs:
           Write-Host $IMAGE_TAG
 
           "IMAGE_TAG=$IMAGE_TAG" >> $env:GITHUB_ENV
-
           "IMAGE_NAME=user-service:$IMAGE_TAG" >> $env:GITHUB_ENV
 
 
       # ============================================================
-      # 7. Build Docker image
+      # 6. Configure Minikube Docker and build image
       # ============================================================
-      - name: Build Docker image
+      - name: Configure Minikube Docker and Build Image
+        shell: powershell
         run: |
+          Write-Host "Configuring Docker for Minikube..."
+
+          minikube docker-env --shell powershell | Invoke-Expression
+
+          Write-Host ""
+          Write-Host "===== DOCKER CONTEXT ====="
+          docker context show
+
+          Write-Host ""
+          Write-Host "===== DOCKER INFO ====="
+          docker info
+
+          Write-Host ""
+          Write-Host "===== BUILDING IMAGE ====="
+          Write-Host "Image: user-service:$env:IMAGE_TAG"
+
           docker build -t user-service:$env:IMAGE_TAG .
 
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "ERROR: Docker build failed"
+              exit 1
+          }
 
-      # ============================================================
-      # 8. Check Docker image
-      # ============================================================
-      - name: Check Docker image
-        run: |
+          Write-Host ""
+          Write-Host "===== CREATED IMAGE ====="
           docker images user-service
 
 
       # ============================================================
-      # 9. Verify image exists in Minikube
+      # 7. Verify image exists in Minikube
       # ============================================================
       - name: Verify image in Minikube
         shell: powershell
@@ -107,7 +111,7 @@ jobs:
 
 
       # ============================================================
-      # 10. Capture current deployment image
+      # 8. Capture current deployment image
       # ============================================================
       - name: Capture current deployment
         shell: powershell
@@ -138,7 +142,7 @@ jobs:
 
 
       # ============================================================
-      # 11. Deploy Service
+      # 9. Deploy Service
       # ============================================================
       - name: Deploy Service
         run: |
@@ -146,7 +150,7 @@ jobs:
 
 
       # ============================================================
-      # 12. Prepare Deployment YAML with unique image
+      # 10. Prepare Deployment YAML with unique image
       # ============================================================
       - name: Prepare Deployment
         shell: powershell
@@ -178,7 +182,7 @@ jobs:
 
 
       # ============================================================
-      # 13. Apply Deployment
+      # 11. Apply Deployment
       # ============================================================
       - name: Deploy new version
         run: |
@@ -186,7 +190,7 @@ jobs:
 
 
       # ============================================================
-      # 14. Find new ReplicaSet
+      # 12. Find new ReplicaSet
       # ============================================================
       - name: Find new ReplicaSet
         shell: powershell
@@ -253,7 +257,7 @@ jobs:
 
 
       # ============================================================
-      # 15. Check ONLY the new pod
+      # 13. Check ONLY the new pod
       # ============================================================
       - name: Validate new pod
         shell: powershell
@@ -310,7 +314,6 @@ jobs:
           Write-Host ""
 
           $success = $false
-          $failure = $false
 
           for ($i = 1; $i -le 60; $i++) {
 
@@ -364,11 +367,8 @@ jobs:
                   Write-Host "ERROR: NEW POD FAILED"
                   Write-Host "=========================================="
 
-                  $failure = $true
-
                   break
               }
-
 
               Start-Sleep -Seconds 2
           }
@@ -417,7 +417,6 @@ jobs:
                   if ($LASTEXITCODE -ne 0) {
 
                       Write-Host "ERROR: Rollback command failed."
-
                       exit 1
                   }
 
@@ -452,7 +451,7 @@ jobs:
 
 
       # ============================================================
-      # 16. Final deployment check
+      # 14. Final deployment check
       # ============================================================
       - name: Final deployment check
         run: |
