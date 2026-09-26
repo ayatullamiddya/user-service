@@ -32,3 +32,19 @@ spec:
 
           ports:
             - containerPort: 8080
+            
+          env:
+            - name: SPRING_R2DBC_URL
+              value: "r2dbc:mysql://mysql-88a7d1-ayatullamiddya99-2fef.e.aivencloud.com:21734/studentdb?sslMode=DISABLED"
+
+            - name: SPRING_R2DBC_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: aiven-mysql-credentials
+                  key: AIVEN_USERNAME
+
+            - name: SPRING_R2DBC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: aiven-mysql-credentials
+                  key: AIVEN_PASSWORD
