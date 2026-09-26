@@ -60,26 +60,49 @@ jobs:
           }
 
           Write-Host "Image found successfully"
-
       # 9. Deploy application
       - name: Deploy to Minikube
         run: |
           kubectl apply -f k8s/deployment.yml
           kubectl apply -f k8s/service.yml
 
-      # 10. Wait for pods to be ready
-      - name: Wait for Pods
-        run: |
-          kubectl rollout status deployment/my-service --timeout=60s
-
-      # 11. Restart deployment
+      # 10. Restart deployment
       - name: Restart deployment
         run: |
           kubectl rollout restart deployment/my-service
 
-      # 12. Check deployment
-      - name: Check deployment
+      # 11. Wait for deployment rollout
+      - name: Wait for deployment rollout
         run: |
-          kubectl get deployments
-          kubectl get pods
-          kubectl get services
+          kubectl rollout status deployment/my-service --timeout=120s
+
+      # 12. Check pod status
+      - name: Verify pods are running
+        shell: powershell
+        run: |
+          Write-Host "Checking my-service pods..."
+
+          kubectl get pods -l app=my-service -o wide
+
+          $pods = kubectl get pods -l app=my-service --no-headers
+
+          if ($pods -match "ContainerCreating|Pending|CrashLoopBackOff|Error|ImagePullBackOff") {
+              Write-Host "ERROR: my-service pod is not running correctly."
+              kubectl describe pods -l app=my-service
+              exit 1
+          }
+
+          if (!($pods -match "1/1.*Running")) {
+              Write-Host "ERROR: my-service pod is not Ready."
+              kubectl describe pods -l app=my-service
+              exit 1
+          }
+
+          Write-Host "SUCCESS: my-service pod is Running and Ready."
+
+      # 13. Check deployment and service
+      - name: Final deployment check
+        run: |
+          kubectl get deployment my-service
+          kubectl get pods -l app=my-service
+          kubectl get service my-service
