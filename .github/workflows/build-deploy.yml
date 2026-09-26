@@ -150,36 +150,36 @@ jobs:
 
 
       # ============================================================
-      # 10. Prepare Deployment YAML with unique image
       # ============================================================
-      - name: Prepare Deployment
-        shell: powershell
-        run: |
+	    # 10. Prepare Deployment YAML with unique image
+			# ============================================================
+			- name: Prepare Deployment
+			  shell: powershell
+			  run: |
 
-          $deploymentFile = "k8s/deployment.yml"
+				$deploymentFile = "k8s/deployment.yml"
 
-          $generatedFile = Join-Path $env:RUNNER_TEMP "user-service-deployment.yml"
+				$generatedFile = Join-Path $env:RUNNER_TEMP "user-service-deployment.yml"
 
-          Write-Host "Generating deployment manifest..."
-          Write-Host "Image: user-service:$env:IMAGE_TAG"
+				Write-Host "Generating deployment manifest..."
+				Write-Host "Image: user-service:$env:IMAGE_TAG"
 
-          $content = Get-Content $deploymentFile -Raw
+				$content = Get-Content $deploymentFile -Raw
 
-          $content = $content -replace `
-            '(?m)^\s*image:\s*user-service:[^\r\n]+$', `
-            "          image: user-service:$env:IMAGE_TAG"
+				$content = $content -replace `
+				  'image:\s*user-service:[^\s]+', `
+				  "image: user-service:$env:IMAGE_TAG"
 
-          Set-Content `
-            -Path $generatedFile `
-            -Value $content `
-            -Encoding UTF8
+				Set-Content `
+				  -Path $generatedFile `
+				  -Value $content `
+				  -Encoding UTF8
 
-          Write-Host ""
-          Write-Host "Generated deployment:"
-          Get-Content $generatedFile
+				Write-Host ""
+				Write-Host "===== GENERATED DEPLOYMENT ====="
+				Get-Content $generatedFile
 
-          "GENERATED_DEPLOYMENT=$generatedFile" >> $env:GITHUB_ENV
-
+				"GENERATED_DEPLOYMENT=$generatedFile" >> $env:GITHUB_ENV
 
       # ============================================================
       # 11. Apply Deployment
