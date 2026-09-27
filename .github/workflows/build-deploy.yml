@@ -42,8 +42,30 @@ jobs:
       - name: Check Minikube
         run: minikube status
 
-
       # ============================================================
+      # ============================================================
+      # 5. Enable Minikube Ingress
+      # ============================================================
+      - name: Enable Minikube Ingress
+        shell: powershell
+        run: |
+          minikube addons enable ingress
+
+          Write-Host "Waiting for NGINX Ingress Controller..."
+
+          kubectl wait `
+            --namespace ingress-nginx `
+            --for=condition=Ready pod `
+            --selector=app.kubernetes.io/component=controller `
+            --timeout=180s
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "ERROR: Ingress controller is not ready."
+              kubectl get pods -n ingress-nginx
+              exit 1
+          }
+
+          Write-Host "Ingress controller is ready."
       # 5. Generate unique image tag
       # ============================================================
       - name: Generate image tag
@@ -150,7 +172,24 @@ jobs:
         run: |
           kubectl apply -f k8s/service.yml
 
+            # ============================================================
+      # 10. Deploy Ingress
+      # ============================================================
+      - name: Deploy Ingress
+        shell: powershell
+        run: |
+          Write-Host "Applying Ingress..."
 
+          kubectl apply -f k8s/ingress.yml
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "ERROR: Ingress deployment failed."
+              exit 1
+          }
+
+          Write-Host ""
+          Write-Host "Ingress:"
+          kubectl get ingress user-service-ingress
       # ============================================================
       # 10. Prepare Deployment YAML with unique image
       # ============================================================
@@ -542,6 +581,14 @@ jobs:
           Write-Host ""
           Write-Host "Service:"
           kubectl get service user-service
+
+          Write-Host ""
+          Write-Host "Ingress:"
+          kubectl get ingress user-service-ingress
+
+          Write-Host ""
+          Write-Host "Ingress Details:"
+          kubectl describe ingress user-service-ingress
 
 
           Write-Host ""
