@@ -28,69 +28,47 @@ jobs:
         run: |
           $IMAGE_TAG = "${{ github.sha }}".Substring(0, 7)
           "IMAGE_TAG=$IMAGE_TAG" >> $env:GITHUB_ENV
-          # For local Minikube
-          "LOCAL_IMAGE=user-service:$IMAGE_TAG" >> $env:GITHUB_ENV
-          # For OCIR
-          "OCIR_IMAGE=hyd.ocir.io/ax9deyw9wgup/ayatullamiddya99/user-service:$IMAGE_TAG" >> $env:GITHUB_ENV
+          "IMAGE_NAME=hyd.ocir.io/ax9deyw9wgup/ayatullamiddya99/docker-image-registry:$IMAGE_TAG" >> $env:GITHUB_ENV
 
-      # 4A. Build image in Minikube (local phase)
-      - name: Build image in Minikube
-        shell: powershell
-        run: |
-          minikube docker-env --shell powershell | Invoke-Expression
-          docker build -t $env:LOCAL_IMAGE .
-          docker images user-service
-
-      # 4B. (Later) Build and push image to OCIR
+      # 4. Login to OCIR
       - name: Login to OCIR
-        if: github.ref == 'refs/heads/main' # only push on main branch
         run: |
           echo ${{ secrets.OCIR_AUTH_TOKEN }} | docker login hyd.ocir.io \
             -u 'ax9deyw9wgup/ayatullamiddya99@gmail.com' --password-stdin
 
+      # 5. Build and push to OCIR
       - name: Build and push to OCIR
-        if: github.ref == 'refs/heads/main'
         run: |
-          docker build -t ${{ env.OCIR_IMAGE }} .
-          docker push ${{ env.OCIR_IMAGE }}
+          docker build -t ${{ env.IMAGE_NAME }} .
+          docker push ${{ env.IMAGE_NAME }}
 
-      # 5. Prepare Deployment YAML
+      # 6. Prepare Deployment YAML
       - name: Prepare Deployment
         shell: powershell
         run: |
           $deploymentFile = "k8s/deployment.yml"
           $generatedFile = Join-Path $env:RUNNER_TEMP "user-service-deployment.yml"
-
           $content = Get-Content $deploymentFile -Raw
-
-          # For local Minikube, replace with LOCAL_IMAGE
-          if ($env:GITHUB_REF -ne "refs/heads/main") {
-            $content = $content -replace 'image:\s*.*', "image: $env:LOCAL_IMAGE"
-          }
-          else {
-            # For OCIR (main branch)
-            $content = $content -replace 'image:\s*.*', "image: $env:OCIR_IMAGE"
-          }
-
+          $content = $content -replace 'image:\s*.*', "image: $env:IMAGE_NAME"
           Set-Content -Path $generatedFile -Value $content -Encoding UTF8
           "GENERATED_DEPLOYMENT=$generatedFile" >> $env:GITHUB_ENV
 
-      # 6. Apply Deployment
+      # 7. Apply Deployment
       - name: Deploy new version
         run: |
           kubectl apply -f "$env:GENERATED_DEPLOYMENT"
 
-      # 7. Deploy Service
+      # 8. Deploy Service
       - name: Deploy Service
         run: |
           kubectl apply -f k8s/service.yml
 
-      # 8. Deploy Ingress
+      # 9. Deploy Ingress
       - name: Deploy Ingress
         run: |
           kubectl apply -f k8s/ingress.yml
 
-      # 9. Final deployment check
+      # 10. Final deployment check
       - name: Final deployment check
         run: |
           kubectl get deployment user-service
