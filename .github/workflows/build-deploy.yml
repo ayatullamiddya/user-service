@@ -1,0 +1,604 @@
+name: Build and Deploy to Minikube
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - development
+
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: self-hosted
+
+    steps:
+
+      # ============================================================
+      # 1. Checkout source code
+      # ============================================================
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+
+      # ============================================================
+      # 2. Check Java
+      # ============================================================
+      - name: Check Java
+        run: java -version
+
+
+      # ============================================================
+      # 3. Build Spring Boot application
+      # ============================================================
+      - name: Build application
+        run: mvn clean package -DskipTests
+
+
+      # ============================================================
+      # 4. Check Minikube
+      # ============================================================
+      - name: Check Minikube
+        run: minikube status
+
+      # ============================================================
+      # ============================================================
+      # 5. Enable Minikube Ingress
+      # ============================================================
+      - name: Enable Minikube Ingress
+        shell: powershell
+        run: |
+          minikube addons enable ingress
+
+          Write-Host "Waiting for NGINX Ingress Controller..."
+
+          kubectl wait `
+            --namespace ingress-nginx `
+            --for=condition=Ready pod `
+            --selector=app.kubernetes.io/component=controller `
+            --timeout=180s
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "ERROR: Ingress controller is not ready."
+              kubectl get pods -n ingress-nginx
+              exit 1
+          }
+
+          Write-Host "Ingress controller is ready."
+      # 5. Generate unique image tag
+      # ============================================================
+      - name: Generate image tag
+        shell: powershell
+        run: |
+          $IMAGE_TAG = "${{ github.sha }}".Substring(0, 7)
+
+          Write-Host "Image tag:"
+          Write-Host $IMAGE_TAG
+
+          "IMAGE_TAG=$IMAGE_TAG" >> $env:GITHUB_ENV
+          "IMAGE_NAME=user-service:$IMAGE_TAG" >> $env:GITHUB_ENV
+
+
+      # ============================================================
+      # 6. Configure Minikube Docker and build image
+      # ============================================================
+      - name: Configure Minikube Docker and Build Image
+        shell: powershell
+        run: |
+          Write-Host "Configuring Docker for Minikube..."
+
+          minikube docker-env --shell powershell | Invoke-Expression
+
+          Write-Host ""
+          Write-Host "===== DOCKER CONTEXT ====="
+          docker context show
+
+          Write-Host ""
+          Write-Host "===== DOCKER INFO ====="
+          docker info
+
+          Write-Host ""
+          Write-Host "===== BUILDING IMAGE ====="
+          Write-Host "Image: user-service:$env:IMAGE_TAG"
+
+          docker build -t user-service:$env:IMAGE_TAG .
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "ERROR: Docker build failed"
+              exit 1
+          }
+
+          Write-Host ""
+          Write-Host "===== CREATED IMAGE ====="
+          docker images user-service
+
+
+      # ============================================================
+      # 7. Verify image exists in Minikube
+      # ============================================================
+      - name: Verify image in Minikube
+        shell: powershell
+        run: |
+          Write-Host "Checking image in Minikube..."
+
+          minikube image ls
+
+          if (!(minikube image ls | Select-String "user-service:$env:IMAGE_TAG")) {
+              Write-Host "ERROR: Image not found in Minikube"
+              exit 1
+          }
+
+          Write-Host "Image found successfully"
+
+
+      # ============================================================
+      # 8. Capture current deployment image
+      # ============================================================
+      - name: Capture current deployment
+        shell: powershell
+        run: |
+
+          $deploymentExists = kubectl get deployment user-service `
+            --ignore-not-found `
+            -o name 2>$null
+
+          if ([string]::IsNullOrWhiteSpace($deploymentExists)) {
+
+              Write-Host "user-service deployment does not exist."
+              Write-Host "This is the first deployment."
+
+              "OLD_IMAGE=" >> $env:GITHUB_ENV
+              "FIRST_DEPLOYMENT=true" >> $env:GITHUB_ENV
+
+          }
+          else {
+
+              $oldImage = kubectl get deployment user-service `
+                -o jsonpath="{.spec.template.spec.containers[0].image}"
+
+              Write-Host "Current image:"
+              Write-Host $oldImage
+
+              "OLD_IMAGE=$oldImage" >> $env:GITHUB_ENV
+              "FIRST_DEPLOYMENT=false" >> $env:GITHUB_ENV
+          }
+
+
+      # ============================================================
+      # 9. Deploy Service
+      # ============================================================
+      - name: Deploy Service
+        run: |
+          kubectl apply -f k8s/service.yml
+
+            # ============================================================
+      # 10. Deploy Ingress
+      # ============================================================
+      - name: Deploy Ingress
+        shell: powershell
+        run: |
+          Write-Host "Applying Ingress..."
+
+          kubectl apply -f k8s/ingress.yml
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "ERROR: Ingress deployment failed."
+              exit 1
+          }
+
+          Write-Host ""
+          Write-Host "Ingress:"
+          kubectl get ingress user-service-ingress
+      # ============================================================
+      # 10. Prepare Deployment YAML with unique image
+      # ============================================================
+      - name: Prepare Deployment
+        shell: powershell
+        run: |
+
+          $deploymentFile = "k8s/deployment.yml"
+
+          $generatedFile = Join-Path $env:RUNNER_TEMP "user-service-deployment.yml"
+
+          Write-Host "Generating deployment manifest..."
+          Write-Host "Image: user-service:$env:IMAGE_TAG"
+
+          if (!(Test-Path $deploymentFile)) {
+              Write-Host "ERROR: Deployment file not found:"
+              Write-Host $deploymentFile
+              exit 1
+          }
+
+          $content = Get-Content $deploymentFile -Raw
+
+          $content = $content -replace `
+            'image:\s*user-service:[^\s]+', `
+            "image: user-service:$env:IMAGE_TAG"
+
+          Set-Content `
+            -Path $generatedFile `
+            -Value $content `
+            -Encoding UTF8
+
+          Write-Host ""
+          Write-Host "===== GENERATED DEPLOYMENT ====="
+          Get-Content $generatedFile
+
+          "GENERATED_DEPLOYMENT=$generatedFile" >> $env:GITHUB_ENV
+
+
+      # ============================================================
+      # 11. Apply Deployment
+      # ============================================================
+      - name: Deploy new version
+        shell: powershell
+        run: |
+          Write-Host "Applying deployment..."
+
+          kubectl apply -f "$env:GENERATED_DEPLOYMENT"
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "ERROR: Deployment apply failed"
+              exit 1
+          }
+
+
+      # ============================================================
+      # 12. Find new ReplicaSet
+      # ============================================================
+      - name: Find new ReplicaSet
+        shell: powershell
+        run: |
+
+          Write-Host "Waiting for new ReplicaSet..."
+
+          $newReplicaSet = $null
+
+          for ($i = 1; $i -le 30; $i++) {
+
+              $rsJson = kubectl get rs `
+                -l app=user-service `
+                -o json
+
+              if ($LASTEXITCODE -ne 0) {
+                  Write-Host "Unable to get ReplicaSets."
+                  Start-Sleep -Seconds 2
+                  continue
+              }
+
+              $rsData = $rsJson | ConvertFrom-Json
+
+              $candidates = @(
+                  $rsData.items |
+                  Where-Object {
+                      $_.spec.template.spec.containers[0].image `
+                      -eq "user-service:$env:IMAGE_TAG"
+                  } |
+                  Sort-Object {
+                      $_.metadata.creationTimestamp
+                  } -Descending
+              )
+
+              if ($candidates.Count -gt 0) {
+
+                  $newReplicaSet = $candidates[0]
+
+                  Write-Host ""
+                  Write-Host "New ReplicaSet found:"
+                  Write-Host $newReplicaSet.metadata.name
+
+                  break
+              }
+
+              Write-Host "New ReplicaSet not created yet..."
+
+              Start-Sleep -Seconds 2
+          }
+
+          if ($null -eq $newReplicaSet) {
+
+              Write-Host "ERROR: New ReplicaSet was not created."
+
+              Write-Host ""
+              Write-Host "Deployment:"
+              kubectl get deployment user-service
+
+              Write-Host ""
+              Write-Host "ReplicaSets:"
+              kubectl get rs -l app=user-service
+
+              exit 1
+          }
+
+          $newRsName = $newReplicaSet.metadata.name
+
+          $podHash = $newReplicaSet.metadata.labels.'pod-template-hash'
+
+          Write-Host ""
+          Write-Host "New ReplicaSet: $newRsName"
+          Write-Host "Pod Template Hash: $podHash"
+
+          "NEW_RS=$newRsName" >> $env:GITHUB_ENV
+          "NEW_POD_HASH=$podHash" >> $env:GITHUB_ENV
+
+
+      # ============================================================
+      # 13. Check ONLY the new pod
+      # ============================================================
+      - name: Validate new pod
+        shell: powershell
+        run: |
+
+          Write-Host "=========================================="
+          Write-Host "Checking NEW user-service pod"
+          Write-Host "=========================================="
+
+          $newPod = $null
+
+          for ($i = 1; $i -le 60; $i++) {
+
+              $podName = kubectl get pods `
+                -l "app=user-service,pod-template-hash=$env:NEW_POD_HASH" `
+                -o jsonpath="{.items[0].metadata.name}" 2>$null
+
+              if (![string]::IsNullOrWhiteSpace($podName)) {
+
+                  $newPod = $podName
+
+                  Write-Host ""
+                  Write-Host "New pod found:"
+                  Write-Host $newPod
+
+                  break
+              }
+
+              Write-Host "Waiting for new pod..."
+
+              Start-Sleep -Seconds 2
+          }
+
+          if ([string]::IsNullOrWhiteSpace($newPod)) {
+
+              Write-Host "ERROR: New pod was not created."
+
+              kubectl get pods -l app=user-service
+              kubectl get rs -l app=user-service
+
+              if ($env:FIRST_DEPLOYMENT -eq "false") {
+
+                  Write-Host "Rolling back..."
+
+                  kubectl rollout undo deployment/user-service
+
+                  kubectl rollout status `
+                    deployment/user-service `
+                    --timeout=120s
+              }
+
+              exit 1
+          }
+
+
+          Write-Host ""
+          Write-Host "Monitoring new pod:"
+          Write-Host $newPod
+          Write-Host ""
+
+          $success = $false
+
+
+          # ========================================================
+          # Monitor new pod
+          # ========================================================
+          for ($i = 1; $i -le 60; $i++) {
+
+              $phase = kubectl get pod $newPod `
+                -o jsonpath="{.status.phase}" 2>$null
+
+              $ready = kubectl get pod $newPod `
+                -o jsonpath="{.status.conditions[?(@.type=='Ready')].status}" 2>$null
+
+              $waitingReason = kubectl get pod $newPod `
+                -o jsonpath="{.status.containerStatuses[0].state.waiting.reason}" 2>$null
+
+              Write-Host ""
+              Write-Host "Check $i / 60"
+              Write-Host "Pod: $newPod"
+              Write-Host "Phase: $phase"
+              Write-Host "Ready: $ready"
+              Write-Host "Waiting reason: $waitingReason"
+
+
+              # ----------------------------------------------------
+              # SUCCESS
+              # ----------------------------------------------------
+              if ($phase -eq "Running" -and $ready -eq "True") {
+
+                  Write-Host ""
+                  Write-Host "=========================================="
+                  Write-Host "SUCCESS: NEW POD IS RUNNING AND READY"
+                  Write-Host "=========================================="
+
+                  $success = $true
+
+                  break
+              }
+
+
+              # ----------------------------------------------------
+              # DEFINITE FAILURE
+              # ----------------------------------------------------
+              if (
+                  $waitingReason -eq "CrashLoopBackOff" -or
+                  $waitingReason -eq "ImagePullBackOff" -or
+                  $waitingReason -eq "ErrImagePull" -or
+                  $waitingReason -eq "CreateContainerError" -or
+                  $waitingReason -eq "InvalidImageName"
+              ) {
+
+                  Write-Host ""
+                  Write-Host "=========================================="
+                  Write-Host "ERROR: NEW POD FAILED"
+                  Write-Host "=========================================="
+
+                  break
+              }
+
+              Start-Sleep -Seconds 2
+          }
+
+
+          # ========================================================
+          # New pod failed -> diagnostics + rollback
+          # ========================================================
+          if (!$success) {
+
+              Write-Host ""
+              Write-Host "=========================================="
+              Write-Host "NEW VERSION FAILED"
+              Write-Host "=========================================="
+
+              Write-Host ""
+              Write-Host "New pod:"
+              kubectl get pod $newPod -o wide
+
+
+              Write-Host ""
+              Write-Host "New pod logs:"
+              kubectl logs $newPod `
+                --all-containers=true `
+                --tail=200
+
+
+              Write-Host ""
+              Write-Host "Previous container logs:"
+              kubectl logs $newPod `
+                --all-containers=true `
+                --previous `
+                --tail=200 2>$null
+
+
+              Write-Host ""
+              Write-Host "New pod description:"
+              kubectl describe pod $newPod
+
+
+              Write-Host ""
+              Write-Host "All user-service pods:"
+              kubectl get pods -l app=user-service -o wide
+
+
+              Write-Host ""
+              Write-Host "ReplicaSets:"
+              kubectl get rs -l app=user-service
+
+
+              # ----------------------------------------------------
+              # Rollback only if an old version exists
+              # ----------------------------------------------------
+              if ($env:FIRST_DEPLOYMENT -eq "false") {
+
+                  Write-Host ""
+                  Write-Host "=========================================="
+                  Write-Host "ROLLING BACK TO PREVIOUS VERSION"
+                  Write-Host "=========================================="
+
+                  kubectl rollout undo deployment/user-service
+
+                  if ($LASTEXITCODE -ne 0) {
+
+                      Write-Host "ERROR: Rollback command failed."
+                      exit 1
+                  }
+
+
+                  Write-Host ""
+                  Write-Host "Waiting for rollback..."
+
+                  kubectl rollout status `
+                    deployment/user-service `
+                    --timeout=120s
+
+                  if ($LASTEXITCODE -ne 0) {
+
+                      Write-Host "ERROR: Rollback did not complete successfully."
+
+                      Write-Host ""
+                      Write-Host "Current pods:"
+                      kubectl get pods -l app=user-service -o wide
+
+                      exit 1
+                  }
+
+
+                  Write-Host ""
+                  Write-Host "Rollback completed."
+
+
+                  Write-Host ""
+                  Write-Host "Current deployment:"
+                  kubectl get deployment user-service
+
+
+                  Write-Host ""
+                  Write-Host "Current image:"
+                  kubectl get deployment user-service `
+                    -o jsonpath="{.spec.template.spec.containers[0].image}"
+
+
+                  Write-Host ""
+                  Write-Host "Current pods:"
+                  kubectl get pods -l app=user-service -o wide
+              }
+
+              exit 1
+          }
+
+
+      # ============================================================
+      # 14. Final deployment check
+      # ============================================================
+      - name: Final deployment check
+        shell: powershell
+        run: |
+
+          Write-Host "=========================================="
+          Write-Host "FINAL DEPLOYMENT CHECK"
+          Write-Host "=========================================="
+
+
+          Write-Host ""
+          Write-Host "Deployment:"
+          kubectl get deployment user-service
+
+
+          Write-Host ""
+          Write-Host "Pods:"
+          kubectl get pods -l app=user-service -o wide
+
+
+          Write-Host ""
+          Write-Host "Service:"
+          kubectl get service user-service
+
+          Write-Host ""
+          Write-Host "Ingress:"
+          kubectl get ingress user-service-ingress
+
+          Write-Host ""
+          Write-Host "Ingress Details:"
+          kubectl describe ingress user-service-ingress
+
+
+          Write-Host ""
+          Write-Host "Current image:"
+          kubectl get deployment user-service `
+            -o jsonpath="{.spec.template.spec.containers[0].image}"
+
+
+          Write-Host ""
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "DEPLOYMENT COMPLETED SUCCESSFULLY"
+          Write-Host "=====================
