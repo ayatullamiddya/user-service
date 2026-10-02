@@ -32,11 +32,15 @@ jobs:
 
 
       # 5. Build and push to OCIR
+      - name: Logout from OCIR (clear cache)
+        run: docker logout hyd.ocir.io
+
       - name: Login to OCIR
         shell: powershell
         run: |
           $token = "${{ secrets.OCIR_AUTH_TOKEN }}"
           $token | docker login hyd.ocir.io --username "ax9deyw9wgup/ayatullamiddya99@gmail.com" --password-stdin
+
 
       # 6. Prepare Deployment YAML
       - name: Prepare Deployment
