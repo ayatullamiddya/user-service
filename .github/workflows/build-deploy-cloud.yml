@@ -24,19 +24,18 @@ jobs:
 
       # 3. Generate unique image tag
       - name: Generate image tag
-        shell: powershell
+        shell: pwsh
         run: |
           $IMAGE_TAG = "${{ github.sha }}".Substring(0, 7)
           "IMAGE_TAG=$IMAGE_TAG" >> $env:GITHUB_ENV
           "IMAGE_NAME=hyd.ocir.io/ax9deyw9wgup/ayatullamiddya99/docker-image-registry:$IMAGE_TAG" >> $env:GITHUB_ENV
 
       # 4. Login to OCIR
-        - name: Login to OCIR
+      - name: Login to OCIR
         shell: pwsh
         run: |
           $token = "${{ secrets.OCIR_AUTH_TOKEN }}"
           $token | docker login hyd.ocir.io --username "ax9deyw9wgup/ayatullamiddya99@gmail.com" --password-stdin
-
 
       # 5. Build and push to OCIR
       - name: Build and push to OCIR
@@ -46,7 +45,7 @@ jobs:
 
       # 6. Prepare Deployment YAML
       - name: Prepare Deployment
-        shell: powershell
+        shell: pwsh
         run: |
           $deploymentFile = "k8s/deployment.yml"
           $generatedFile = Join-Path $env:RUNNER_TEMP "user-service-deployment.yml"
