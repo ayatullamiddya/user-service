@@ -24,11 +24,12 @@ jobs:
 
       # 3. Generate unique image tag
       - name: Generate image tag
-        shell: pwsh
+        shell: powershell
         run: |
           $IMAGE_TAG = "${{ github.sha }}".Substring(0, 7)
-          "IMAGE_TAG=$IMAGE_TAG" >> $env:GITHUB_ENV
-          "IMAGE_NAME=hyd.ocir.io/ax9deyw9wgup/ayatullamiddya99/docker-image-registry:$IMAGE_TAG" >> $env:GITHUB_ENV
+          Add-Content -Path $env:GITHUB_ENV -Value "IMAGE_TAG=$IMAGE_TAG"
+          Add-Content -Path $env:GITHUB_ENV -Value "IMAGE_NAME=hyd.ocir.io/ax9deyw9wgup/ayatullamiddya99/docker-image-registry:$IMAGE_TAG"
+
 
       # 4. Login to OCIR
       - name: Login to OCIR
