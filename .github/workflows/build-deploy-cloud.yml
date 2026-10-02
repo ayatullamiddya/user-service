@@ -14,62 +14,146 @@ jobs:
     runs-on: self-hosted
 
     steps:
+
+      # ============================================================
       # 1. Checkout source code
+      # ============================================================
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      # 2. Build Spring Boot application
+
+      # ============================================================
+      # 2. Check OCIR secret
+      # ============================================================
+      - name: Check OCIR secret
+        shell: powershell
+        run: |
+          if ([string]::IsNullOrWhiteSpace("${{ secrets.OCIR_AUTH_TOKEN }}")) {
+              Write-Host "OCIR_AUTH_TOKEN is EMPTY"
+              exit 1
+          }
+
+          Write-Host "OCIR_AUTH_TOKEN is available"
+
+
+      # ============================================================
+      # 3. Build Spring Boot application
+      # ============================================================
       - name: Build application
         run: mvn clean package -DskipTests
 
-      # 3. Generate unique image tag
-      - name: Generate image tag
+
+      # ============================================================
+      # 4. Generate unique image tag
+      # ============================================================
+      - name: Generate unique image tag
         shell: powershell
         run: |
           $IMAGE_TAG = "${{ github.sha }}".Substring(0, 7)
+
+          $IMAGE_NAME = "hyd.ocir.io/ax9deyw9wgup/ayatullamiddya99/docker-image-registry:$IMAGE_TAG"
+
           Add-Content -Path $env:GITHUB_ENV -Value "IMAGE_TAG=$IMAGE_TAG"
-          Add-Content -Path $env:GITHUB_ENV -Value "IMAGE_NAME=hyd.ocir.io/ax9deyw9wgup/ayatullamiddya99/docker-image-registry:$IMAGE_TAG"
+          Add-Content -Path $env:GITHUB_ENV -Value "IMAGE_NAME=$IMAGE_NAME"
+
+          Write-Host "IMAGE_TAG: $IMAGE_TAG"
+          Write-Host "IMAGE_NAME: $IMAGE_NAME"
 
 
-      # 5. Build and push to OCIR
-      - name: Logout from OCIR (clear cache)
+      # ============================================================
+      # 5. Logout from OCIR
+      # ============================================================
+      - name: Logout from OCIR
         run: docker logout hyd.ocir.io
 
+
+      # ============================================================
+      # 6. Login to OCIR
+      # ============================================================
       - name: Login to OCIR
         shell: powershell
         run: |
           $token = "${{ secrets.OCIR_AUTH_TOKEN }}"
-          $token | docker login hyd.ocir.io --username "ax9deyw9wgup/ayatullamiddya99@gmail.com" --password-stdin
+
+          $token | docker login hyd.ocir.io `
+            --username "ax9deyw9wgup/ayatullamiddya99@gmail.com" `
+            --password-stdin
 
 
-      # 6. Prepare Deployment YAML
+      # ============================================================
+      # 7. Build Docker image
+      # ============================================================
+      - name: Build Docker image
+        shell: powershell
+        run: |
+          docker build -t "$env:IMAGE_NAME" .
+
+
+      # ============================================================
+      # 8. Push Docker image to OCIR
+      # ============================================================
+      - name: Push Docker image
+        shell: powershell
+        run: |
+          docker push "$env:IMAGE_NAME"
+
+
+      # ============================================================
+      # 9. Prepare Deployment YAML
+      # ============================================================
       - name: Prepare Deployment
-        shell: pwsh
+        shell: powershell
         run: |
           $deploymentFile = "k8s/deployment.yml"
           $generatedFile = Join-Path $env:RUNNER_TEMP "user-service-deployment.yml"
+
           $content = Get-Content $deploymentFile -Raw
+
           $content = $content -replace 'image:\s*.*', "image: $env:IMAGE_NAME"
-          Set-Content -Path $generatedFile -Value $content -Encoding UTF8
+
+          Set-Content `
+            -Path $generatedFile `
+            -Value $content `
+            -Encoding UTF8
+
           "GENERATED_DEPLOYMENT=$generatedFile" >> $env:GITHUB_ENV
 
-      # 7. Apply Deployment
+          Write-Host "Generated deployment file:"
+          Get-Content $generatedFile
+
+
+      # ============================================================
+      # 10. Apply Deployment
+      # ============================================================
       - name: Deploy new version
+        shell: powershell
         run: |
           kubectl apply -f "$env:GENERATED_DEPLOYMENT"
 
-      # 8. Deploy Service
+
+      # ============================================================
+      # 11. Deploy Service
+      # ============================================================
       - name: Deploy Service
+        shell: powershell
         run: |
           kubectl apply -f k8s/service.yml
 
-      # 9. Deploy Ingress
+
+      # ============================================================
+      # 12. Deploy Ingress
+      # ============================================================
       - name: Deploy Ingress
+        shell: powershell
         run: |
           kubectl apply -f k8s/ingress.yml
 
-      # 10. Final deployment check
+
+      # ============================================================
+      # 13. Final deployment check
+      # ============================================================
       - name: Final deployment check
+        shell: powershell
         run: |
           kubectl get deployment user-service
           kubectl get pods -l app=user-service -o wide
