@@ -78,14 +78,21 @@ jobs:
         env:
           OCIR_TOKEN: ${{ secrets.OCIR_AUTH_TOKEN }}
         run: |
-          # Use Write-Output to pipe raw string into docker login via --password-stdin
-          # This avoids PowerShell object-piping issues with stdin
-          Write-Output "$env:OCIR_TOKEN" | docker login hyd.ocir.io `
-            --username "ax9deyw9wgup/ayatullamiddya99@gmail.com" `
+          # Trim token to remove any hidden whitespace/newlines added when pasting into GitHub Secrets
+          $token = $env:OCIR_TOKEN.Trim()
+
+          # Diagnostic: show token length (never print value)
+          Write-Host "Token length after trim: $($token.Length)"
+
+          # NOTE: Federated users (email/Google login) MUST use oracleidentitycloudservice/ prefix
+          # Username format: <tenancy-namespace>/oracleidentitycloudservice/<email>
+          Write-Output "$token" | docker login hyd.ocir.io `
+            --username "ax9deyw9wgup/oracleidentitycloudservice/ayatullamiddya99@gmail.com" `
             --password-stdin
 
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "ERROR: Docker login to OCIR failed!"
+            Write-Host "ERROR: Docker login to OCIR failed! (exit code $LASTEXITCODE)"
+            Write-Host "Check: 1) Token not expired  2) Username format correct  3) No extra whitespace in secret"
             exit 1
           }
 
