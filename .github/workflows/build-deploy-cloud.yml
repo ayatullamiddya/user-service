@@ -64,7 +64,10 @@ jobs:
       # 5. Logout from OCIR
       # ============================================================
       - name: Logout from OCIR
-        run: docker logout hyd.ocir.io
+        shell: powershell
+        run: |
+          docker logout hyd.ocir.io
+          Write-Host "Logged out from OCIR (or was not logged in)"
 
 
       # ============================================================
@@ -72,12 +75,21 @@ jobs:
       # ============================================================
       - name: Login to OCIR
         shell: powershell
+        env:
+          OCIR_TOKEN: ${{ secrets.OCIR_AUTH_TOKEN }}
         run: |
-          $token = "${{ secrets.OCIR_AUTH_TOKEN }}"
-
-          $token | docker login hyd.ocir.io `
+          # Use Write-Output to pipe raw string into docker login via --password-stdin
+          # This avoids PowerShell object-piping issues with stdin
+          Write-Output "$env:OCIR_TOKEN" | docker login hyd.ocir.io `
             --username "ax9deyw9wgup/ayatullamiddya99@gmail.com" `
             --password-stdin
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "ERROR: Docker login to OCIR failed!"
+            exit 1
+          }
+
+          Write-Host "Successfully logged in to OCIR"
 
 
       # ============================================================
