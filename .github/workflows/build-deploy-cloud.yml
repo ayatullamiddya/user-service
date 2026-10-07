@@ -23,17 +23,25 @@ jobs:
 
 
       # ============================================================
-      # 2. Check OCIR secret
+      # 2. Check OCIR token (from machine env variable)
       # ============================================================
-      - name: Check OCIR secret
+      - name: Check OCIR token
         shell: powershell
         run: |
-          if ([string]::IsNullOrWhiteSpace("${{ secrets.OCIR_AUTH_TOKEN }}")) {
-              Write-Host "OCIR_AUTH_TOKEN is EMPTY"
+          # Reads OCIR_AUTH_TOKEN from the system environment variable
+          # set on the self-hosted runner machine (NOT GitHub Secrets)
+          $token = $env:OCIR_AUTH_TOKEN
+
+          if ([string]::IsNullOrWhiteSpace($token)) {
+              Write-Host "ERROR: OCIR_AUTH_TOKEN environment variable is NOT set on this machine."
+              Write-Host "Set it using: [System.Environment]::SetEnvironmentVariable('OCIR_AUTH_TOKEN', 'your-token', 'Machine')"
+              Write-Host "Then restart the GitHub Actions runner service."
               exit 1
           }
 
-          Write-Host "OCIR_AUTH_TOKEN is available"
+          Write-Host "OCIR_AUTH_TOKEN env variable is set on this machine"
+          Write-Host "Token length : $($token.Trim().Length)"
+          Write-Host "Token prefix : $($token.Trim().Substring(0, [Math]::Min(4, $token.Trim().Length)))****"
 
 
       # ============================================================
@@ -71,32 +79,71 @@ jobs:
 
 
       # ============================================================
-      # 6. Login to OCIR
+      # 6. Test network connectivity to OCIR
+      # ============================================================
+      - name: Test OCIR connectivity
+        shell: powershell
+        run: |
+          Write-Host "Testing HTTPS connectivity to hyd.ocir.io..."
+          try {
+            $response = Invoke-WebRequest -Uri "https://hyd.ocir.io/v2/" -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+            Write-Host "HTTP Status: $($response.StatusCode)"
+          } catch {
+            $statusCode = $_.Exception.Response.StatusCode.value__
+            if ($statusCode -eq 401) {
+              Write-Host "HTTP Status: 401 (Unauthorized) - Expected. Registry is reachable!"
+            } else {
+              Write-Host "Unexpected error: $($_.Exception.Message)"
+              Write-Host "Status code: $statusCode"
+              Write-Host "ERROR: Cannot reach hyd.ocir.io. Check network/firewall."
+              exit 1
+            }
+          }
+          Write-Host "Network connectivity to OCIR: OK"
+
+
+      # ============================================================
+      # 7. Login to OCIR
       # ============================================================
       - name: Login to OCIR
         shell: powershell
-        env:
-          OCIR_TOKEN: ${{ secrets.OCIR_AUTH_TOKEN }}
         run: |
-          # Trim token to remove any hidden whitespace/newlines added when pasting into GitHub Secrets
-          $token = $env:OCIR_TOKEN.Trim()
+          # Read token directly from machine system environment variable
+          $token = $env:OCIR_AUTH_TOKEN.Trim()
 
-          # Diagnostic: show token length (never print value)
-          Write-Host "Token length after trim: $($token.Length)"
+          Write-Host "Token length : $($token.Length)"
+          Write-Host "Token prefix : $($token.Substring(0, [Math]::Min(4, $token.Length)))****"
 
-          # NOTE: Federated users (email/Google login) MUST use oracleidentitycloudservice/ prefix
-          # Username format: <tenancy-namespace>/oracleidentitycloudservice/<email>
-          Write-Output "$token" | docker login hyd.ocir.io `
-            --username "ax9deyw9wgup/oracleidentitycloudservice/ayatullamiddya99@gmail.com" `
-            --password-stdin
+          # Using --password flag directly (avoids any stdin pipe issues on Windows)
+          # Attempt 1: direct OCI user format
+          Write-Host ""
+          Write-Host "Attempt 1: direct OCI user (--password flag)..."
+          docker login hyd.ocir.io `
+            --username "ax9deyw9wgup/ayatullamiddya99@gmail.com" `
+            --password "$token"
 
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "ERROR: Docker login to OCIR failed! (exit code $LASTEXITCODE)"
-            Write-Host "Check: 1) Token not expired  2) Username format correct  3) No extra whitespace in secret"
-            exit 1
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "SUCCESS with direct OCI user format!"
+            exit 0
           }
 
-          Write-Host "Successfully logged in to OCIR"
+          # Attempt 2: IDCS federated user format
+          Write-Host ""
+          Write-Host "Attempt 2: IDCS federated user (--password flag)..."
+          docker login hyd.ocir.io `
+            --username "ax9deyw9wgup/oracleidentitycloudservice/ayatullamiddya99@gmail.com" `
+            --password "$token"
+
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "SUCCESS with IDCS federated user format!"
+            exit 0
+          }
+
+          Write-Host ""
+          Write-Host "ERROR: Both login attempts failed."
+          Write-Host "Check OCIR_AUTH_TOKEN value on this machine or regenerate Auth Token in OCI Console."
+          exit 1
+
 
 
       # ============================================================
