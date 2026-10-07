@@ -23,25 +23,25 @@ jobs:
 
 
       # ============================================================
-      # 2. Check OCIR token (from machine env variable)
+      # 2. Check OCIR token (from GitHub Secrets)
       # ============================================================
       - name: Check OCIR token
         shell: powershell
         run: |
-          # Reads OCIR_AUTH_TOKEN from the system environment variable
-          # set on the self-hosted runner machine (NOT GitHub Secrets)
-          $token = $env:OCIR_AUTH_TOKEN
+          # Reads OCIR_AUTH_TOKEN from GitHub Repository Secrets.
+          # .Trim() is critical — hidden whitespace from copy-paste causes "unauthorized" errors.
+          $token = "${{ secrets.OCIR_AUTH_TOKEN }}".Trim()
 
           if ([string]::IsNullOrWhiteSpace($token)) {
-              Write-Host "ERROR: OCIR_AUTH_TOKEN environment variable is NOT set on this machine."
-              Write-Host "Set it using: [System.Environment]::SetEnvironmentVariable('OCIR_AUTH_TOKEN', 'your-token', 'Machine')"
-              Write-Host "Then restart the GitHub Actions runner service."
+              Write-Host "ERROR: OCIR_AUTH_TOKEN secret is NOT set in GitHub Repository Secrets."
+              Write-Host "Go to: Repo -> Settings -> Secrets and variables -> Actions -> New repository secret"
+              Write-Host "Name: OCIR_AUTH_TOKEN  |  Value: your OCI Auth Token"
               exit 1
           }
 
-          Write-Host "OCIR_AUTH_TOKEN env variable is set on this machine"
-          Write-Host "Token length : $($token.Trim().Length)"
-          Write-Host "Token prefix : $($token.Trim().Substring(0, [Math]::Min(4, $token.Trim().Length)))****"
+          Write-Host "OCIR_AUTH_TOKEN secret is set in GitHub Secrets"
+          Write-Host "Token length : $($token.Length)"
+          Write-Host "Token prefix : $($token.Substring(0, [Math]::Min(4, $token.Length)))****"
 
 
       # ============================================================
@@ -108,13 +108,14 @@ jobs:
       - name: Login to OCIR
         shell: powershell
         run: |
-          # Read token directly from machine system environment variable
-          $token = $env:OCIR_AUTH_TOKEN.Trim()
+          # Read token from GitHub Secrets and trim whitespace.
+          # .Trim() is critical — prevents "unauthorized" caused by hidden newlines/spaces.
+          $token = "${{ secrets.OCIR_AUTH_TOKEN }}".Trim()
 
           Write-Host "Token length : $($token.Length)"
           Write-Host "Token prefix : $($token.Substring(0, [Math]::Min(4, $token.Length)))****"
 
-          # Using --password flag directly (avoids any stdin pipe issues on Windows)
+          # Using --password flag directly (avoids stdin pipe issues on Windows)
           # Attempt 1: direct OCI user format
           Write-Host ""
           Write-Host "Attempt 1: direct OCI user (--password flag)..."
@@ -141,7 +142,7 @@ jobs:
 
           Write-Host ""
           Write-Host "ERROR: Both login attempts failed."
-          Write-Host "Check OCIR_AUTH_TOKEN value on this machine or regenerate Auth Token in OCI Console."
+          Write-Host "Regenerate Auth Token in OCI Console: Profile -> My Profile -> Auth Tokens"
           exit 1
 
 
